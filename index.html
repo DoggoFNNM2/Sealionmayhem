@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>THE MILK RECKONING</title>
+    <style>
+        :root { --wobble: 0deg; --pulse: 1; --hue: 0deg; }
+
+        body, html { 
+            margin: 0; padding: 0; width: 100vw; height: 100vh;
+            background: transparent; overflow: hidden;
+        }
+
+        /* FORCED PASSTHROUGH DISTORTION */
+        /* This layer sits over EVERYTHING and warps the light beneath it */
+        .distorter {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            backdrop-filter: blur(2px) hue-rotate(var(--hue)) saturate(5);
+            pointer-events: none; z-index: 5;
+            mask-image: radial-gradient(circle, transparent 20%, black 80%);
+            background: radial-gradient(circle, transparent, rgba(255, 0, 0, 0.2));
+            animation: shake 0.1s infinite;
+        }
+
+        @keyframes shake {
+            0% { transform: translate(2px, 2px) rotate(0.5deg); }
+            50% { transform: translate(-2px, -2px) rotate(-0.5deg); }
+            100% { transform: translate(2px, 2px) rotate(0.5deg); }
+        }
+
+        canvas { 
+            z-index: 2; position: relative;
+            filter: drop-shadow(0 0 10px rgba(255,255,255,0.5));
+        }
+
+        #start-button { 
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            padding: 50px; background: red; color: white; font-weight: bold;
+            font-family: 'Impact'; font-size: 3rem; z-index: 10000;
+        }
+    </style>
+</head>
+<body>
+    <div class="distorter"></div>
+    <button id="start-button">CONSUME ALL</button>
+
+    <script type="module">
+        import * as THREE from 'https://unpkg.com/three@0.147.0/build/three.module.js';
+
+        let scene, camera, renderer, swarm = [];
+        let time = 0;
+
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(120, window.innerWidth / window.innerHeight, 0.01, 20);
+            
+            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
+            renderer.setPixelRatio(0.2); // Ultra gritty/pixelated
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true;
+            document.body.appendChild(renderer.domElement);
+
+            const texture = new THREE.TextureLoader().load('sealion.png');
+
+            const btn = document.getElementById('start-button');
+            btn.addEventListener('click', () => {
+                navigator.xr.requestSession('immersive-ar', {
+                    requiredFeatures: ['local-floor'],
+                    optionalFeatures: ['dom-overlay'],
+                    domOverlay: { root: document.body }
+                }).then(session => {
+                    renderer.xr.setSession(session);
+                    btn.style.display = 'none';
+                });
+            });
+
+            // SWARM OF 300 MINI SEA LIONS
+            for (let i = 0; i < 300; i++) {
+                const mat = new THREE.SpriteMaterial({ 
+                    map: texture, 
+                    color: new THREE.Color(`hsl(${Math.random() * 360}, 100%, 50%)`),
+                    transparent: true,
+                    opacity: 0.6
+                });
+                const s = new THREE.Sprite(mat);
+                // Scatter them everywhere
+                s.position.set((Math.random()-0.5)*10, (Math.random()-0.5)*10, (Math.random()-0.5)*10);
+                s.scale.set(0.15, 0.15, 1);
+                scene.add(s);
+                swarm.push({
+                    obj: s,
+                    rotSpeed: (Math.random() - 0.5) * 0.2,
+                    orbit: Math.random() * Math.PI * 2
+                });
+            }
+
+            renderer.setAnimationLoop((timestamp, frame) => {
+                time += 0.03;
+
+                // 1. DISTORT PASSTHROUGH VIA CSS
+                document.documentElement.style.setProperty('--hue', `${time * 100}deg`);
+                
+                // 2. CAMERA SEASICKNESS
+                if (frame) {
+                    camera.position.x = Math.sin(time * 2) * 0.1;
+                    camera.position.z = Math.cos(time * 1.5) * 0.1;
+                    camera.rotation.y = Math.sin(time) * 0.2;
+                    camera.rotation.z = Math.cos(time * 0.5) * 0.1;
+                    // FOV Pulsing (Hyper-speed)
+                    camera.fov = 110 + Math.sin(time * 5) * 15;
+                    camera.updateProjectionMatrix();
+                }
+
+                // 3. ANIMATE THE MINI SWARM
+                swarm.forEach((s, i) => {
+                    s.obj.material.rotation += s.rotSpeed;
+                    // Make them "swim" in drunk circles around the camera
+                    s.obj.position.y += Math.sin(time + i) * 0.01;
+                    s.obj.position.x += Math.cos(time * 0.5 + i) * 0.01;
+                });
+
+                renderer.render(scene, camera);
+            });
+        }
+
+        window.addEventListener('load', init);
+    </script>
+</body>
+</html>
