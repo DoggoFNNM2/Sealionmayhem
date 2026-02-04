@@ -2,35 +2,67 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>THE FINAL MILK RECKONING</title>
+    <title>THE DRUNKEN RECKONING</title>
     <style>
-        body, html { margin: 0; padding: 0; width: 100vw; height: 100vh; background: transparent; overflow: hidden; }
-        
-        /* This creates a "Double Vision" ghosting layer over everything */
-        #ui-overlay {
+        :root { 
+            --wobble: 0deg; 
+            --drift-x: 0px; 
+            --drift-y: 0px;
+            --hue: 0deg; 
+        }
+
+        body, html {
+            margin: 0; padding: 0; width: 100vw; height: 100vh;
+            background: black; overflow: hidden;
+        }
+
+        /* CHROMATIC ABERRATION OVERLAY (Affects everything behind it) */
+        /* We create three layers that shift slightly to mimic double vision */
+        .drunk-layer {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            pointer-events: none; z-index: 10;
-            border: 20px solid rgba(255, 0, 0, 0.2);
-            box-sizing: border-box;
-            mix-blend-mode: color-burn; /* Makes reality look "bruised" */
-            animation: pulse-red 0.5s infinite alternate;
+            pointer-events: none;
+            z-index: 1; /* Below the sea lions */
+            mix-blend-mode: screen;
+            transition: transform 0.1s ease-out;
         }
 
-        @keyframes pulse-red {
-            from { background: rgba(255, 0, 255, 0.05); }
-            to { background: rgba(0, 255, 255, 0.05); }
+        .red-shift { 
+            background: rgba(255, 0, 0, 0.1); 
+            transform: translate(var(--drift-x), var(--drift-y)) rotate(var(--wobble)); 
+        }
+        .blue-shift { 
+            background: rgba(0, 0, 255, 0.1); 
+            transform: translate(calc(var(--drift-x) * -1), calc(var(--drift-y) * -1)) rotate(calc(var(--wobble) * -1)); 
         }
 
-        #start-button { 
+        /* VIGNETTE & BLUR FOR SEASICKNESS */
+        .post-processing {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            backdrop-filter: blur(4px);
+            mask-image: radial-gradient(circle, transparent 30%, black 100%);
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        canvas {
+            z-index: 5; /* Sea lions sit ABOVE the chromatic mess but BELOW the blur */
+            position: relative;
+        }
+
+        #start-button {
             position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            padding: 40px; background: white; color: black; font-weight: bold;
-            font-family: 'Impact'; font-size: 2.5rem; z-index: 10001; cursor: pointer;
+            padding: 50px; background: #ff00ea; color: white; font-weight: bold;
+            font-family: 'Impact'; font-size: 3rem; z-index: 10000;
+            cursor: pointer;
         }
     </style>
 </head>
 <body>
-    <div id="ui-overlay"></div>
-    <button id="start-button">DRINK THE FINAL GLASS</button>
+    <div class="drunk-layer red-shift"></div>
+    <div class="drunk-layer blue-shift"></div>
+    <div class="post-processing"></div>
+
+    <button id="start-button">START THE BENDER</button>
 
     <script type="module">
         import * as THREE from 'https://unpkg.com/three@0.147.0/build/three.module.js';
@@ -42,8 +74,8 @@
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(120, window.innerWidth / window.innerHeight, 0.01, 20);
             
-            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
-            renderer.setPixelRatio(0.3); 
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setPixelRatio(window.devicePixelRatio); 
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.xr.enabled = true;
             document.body.appendChild(renderer.domElement);
@@ -62,49 +94,46 @@
                 });
             });
 
-            // SWARM OF 300 MINI SEA LIONS - Constant Rotation
-            for (let i = 0; i < 300; i++) {
-                const mat = new THREE.SpriteMaterial({ 
-                    map: texture, 
-                    color: new THREE.Color(`hsl(${Math.random() * 360}, 100%, 50%)`),
+            // SWARM OF SEA LIONS (The only stable things in your world)
+            for (let i = 0; i < 200; i++) {
+                const mat = new THREE.SpriteMaterial({
+                    map: texture,
                     transparent: true,
-                    opacity: 0.8
+                    opacity: 0.9
                 });
                 const s = new THREE.Sprite(mat);
                 s.position.set((Math.random()-0.5)*8, (Math.random()-0.5)*8, (Math.random()-0.5)*8);
-                s.scale.set(0.1, 0.1, 1);
+                s.scale.set(0.3, 0.3, 1);
                 scene.add(s);
                 swarm.push({
                     obj: s,
-                    rotSpeed: (Math.random() - 0.5) * 0.5,
-                    phase: Math.random() * 10
+                    offset: Math.random() * 100,
+                    speed: 0.01 + Math.random() * 0.02
                 });
             }
 
             renderer.setAnimationLoop((timestamp, frame) => {
-                time += 0.04;
+                time += 0.02;
 
-                if (frame) {
-                    // SEVERE DIZZINESS: The camera won't stop rolling
-                    camera.rotation.z = Math.sin(time * 0.5) * 0.5; 
-                    camera.rotation.x = Math.cos(time * 0.3) * 0.2;
-                    
-                    // WOBBLE: The world drifts back and forth
-                    camera.position.x = Math.sin(time) * 0.5;
-                    
-                    // VISION PULSE: Rapid zooming
-                    camera.fov = 100 + Math.sin(time * 10) * 20;
-                    camera.updateProjectionMatrix();
-                }
+                // 1. DRUNK CSS ANIMATION (Chromatic Aberration + Rotation)
+                const driftX = Math.sin(time * 0.5) * 15;
+                const driftY = Math.cos(time * 0.7) * 15;
+                const wobble = Math.sin(time * 0.3) * 3; // Sloshing rotation
 
-                swarm.forEach((s, i) => {
-                    s.obj.material.rotation += s.rotSpeed;
-                    // Drunken "swimming" logic
-                    s.obj.position.y += Math.sin(time + s.phase) * 0.02;
-                    s.obj.position.x += Math.cos(time + s.phase) * 0.02;
-                    
-                    // Make them flicker in and out of existence
-                    s.obj.material.opacity = 0.3 + Math.sin(time * 5 + i) * 0.5;
+                document.documentElement.style.setProperty('--drift-x', `${driftX}px`);
+                document.documentElement.style.setProperty('--drift-y', `${driftY}px`);
+                document.documentElement.style.setProperty('--wobble', `${wobble}deg`);
+
+                // 2. CAMERA SEASICKNESS (The inner ear failure)
+                camera.position.y = Math.sin(time * 0.5) * 0.2; 
+                camera.rotation.z = Math.sin(time * 0.4) * 0.15; // Horizon tilt
+                camera.fov = 100 + Math.sin(time * 0.2) * 20; // Pushing/Pulling vision
+                camera.updateProjectionMatrix();
+
+                // 3. SEA LION MOVEMENT (Swimming through the chaos)
+                swarm.forEach((s) => {
+                    s.obj.position.y += Math.sin(time + s.offset) * 0.005;
+                    s.obj.material.rotation = Math.sin(time + s.offset) * 0.1;
                 });
 
                 renderer.render(scene, camera);
