@@ -1,170 +1,121 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <title>THE FINAL RECKONING</title>
+    <title>TERMINATOR_HUD_STATIC_v1.0</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script async src="https://docs.opencv.org/4.5.4/opencv.js" type="text/javascript"></script>
     <style>
-        :root { 
-            --wobble: 0deg; 
-            --drift-x: 0px; 
-            --drift-y: 0px;
-            --headache: 0;
-        }
-
-        body, html {
-            margin: 0; padding: 0; width: 100vw; height: 100vh;
-            background: #1a001a; overflow: hidden;
-        }
-
-        /* AGGRESSIVE CHROMATIC ABERRATION */
-        .drunk-layer {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            pointer-events: none; z-index: 1; mix-blend-mode: exclusion;
-        }
-
-        .red-shift { 
-            background: rgba(255, 0, 0, 0.2); 
-            transform: translate(var(--drift-x), var(--drift-y)) rotate(var(--wobble)); 
-        }
-        .blue-shift { 
-            background: rgba(0, 255, 255, 0.2); 
-            transform: translate(calc(var(--drift-x) * -2), calc(var(--drift-y) * -2)) rotate(calc(var(--wobble) * -1.5)); 
-        }
-
-        /* HEADACHE THROB (Triggers after 100s) */
-        .headache-overlay {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: radial-gradient(circle, transparent 20%, rgba(120, 0, 0, var(--headache)) 100%);
-            z-index: 15; pointer-events: none;
-            backdrop-filter: saturate(calc(1 + var(--headache) * 5));
-        }
-
-        .post-processing {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            backdrop-filter: blur(5px);
-            mask-image: radial-gradient(circle, transparent 10%, black 90%);
-            z-index: 10; pointer-events: none;
-        }
-
-        canvas { z-index: 5; position: relative; }
-
-        #start-button {
-            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            padding: 40px; background: #ff00ea; color: white; font-weight: bold;
-            font-family: 'Impact'; font-size: 2.5rem; z-index: 10000;
-            cursor: pointer; border: 5px solid white;
-        }
+        body { margin: 0; background: #000; color: #f00; font-family: 'Courier New', monospace; overflow: hidden; }
+        #ui-layer { position: absolute; width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 10; pointer-events: none; }
+        #canvasOutput { width: 80%; border: 2px solid #f00; box-shadow: 0 0 20px #f00; filter: sepia(100%) saturate(300%) hue-rotate(-50deg); }
+        .hud-text { position: absolute; top: 5%; left: 5%; font-size: 1.2em; text-transform: uppercase; animation: blink 1s infinite; }
+        #vr-btn-container { position: absolute; bottom: 5%; z-index: 20; pointer-events: auto; }
+        video { display: none; }
     </style>
 </head>
 <body>
-    <div class="headache-overlay"></div>
-    <div class="drunk-layer red-shift"></div>
-    <div class="drunk-layer blue-shift"></div>
-    <div class="post-processing"></div>
-
-    <button id="start-button">DRINK THE FORBIDDEN MILK</button>
+    <video id="videoInput" playsinline autoplay></video>
+    
+    <div id="ui-layer">
+        <div class="hud-text">
+            STATUS: ANALYZING_ENVIRONMENT...<br>
+            OBJ_DETECTION: LASER_TRIANGULATION<br>
+            POINTS_SYNCED: <span id="pt-count">0</span>
+        </div>
+        <canvas id="canvasOutput"></canvas>
+        <div id="vr-btn-container"></div>
+    </div>
 
     <script type="module">
-        import * as THREE from 'https://unpkg.com/three@0.147.0/build/three.module.js';
+        import { VRButton } from 'https://cdn.skypack.dev/three@0.128.0/examples/jsm/webxr/VRButton.js';
 
-        let scene, camera, renderer, swarm = [], hallucinations = [], floor;
-        let time = 0;
-        let startTime = Date.now();
+        // --- CONFIG ---
+        const H_OFFSET = 12.0; 
+        const RPC = 0.0016;
+        const MAX_POINTS = 50000;
 
-        function init() {
-            scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(125, window.innerWidth / window.innerHeight, 0.01, 50);
-            
-            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.xr.enabled = true;
-            document.body.appendChild(renderer.domElement);
+        let scene, camera, renderer, points, pointIdx = 0;
+        let video = document.getElementById('videoInput');
+        let src, dst, hsv, mask;
 
-            const texture = new THREE.TextureLoader().load('sealion.png');
+        // --- THREE.JS SETUP ---
+        scene = new THREE.Scene();
+        camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.xr.enabled = true;
+        document.getElementById('vr-btn-container').appendChild(VRButton.createButton(renderer));
 
-            // 1. THE OPAQUE WAVY FLOOR
-            const floorGeo = new THREE.PlaneGeometry(30, 30, 64, 64);
-            const floorMat = new THREE.MeshBasicMaterial({ 
-                map: texture, 
-                side: THREE.DoubleSide,
-                color: 0x888888
-            });
-            floor = new THREE.Mesh(floorGeo, floorMat);
-            floor.rotation.x = -Math.PI / 2;
-            floor.position.y = -1.5;
-            scene.add(floor);
+        const grid = new THREE.GridHelper(400, 80, 0xff0000, 0x220000);
+        grid.position.y = -20;
+        scene.add(grid);
 
-            // 2. THE FLOATING MENTAL BREAKDOWN (3D Objects)
-            for (let i = 0; i < 60; i++) {
-                const geo = new THREE.TorusGeometry(Math.random(), 0.1, 16, 100);
-                const mat = new THREE.MeshNormalMaterial({ wireframe: true });
-                const mesh = new THREE.Mesh(geo, mat);
-                mesh.position.set((Math.random()-0.5)*20, (Math.random()-0.5)*20, (Math.random()-0.5)*20);
-                scene.add(mesh);
-                hallucinations.push(mesh);
-            }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(MAX_POINTS * 3), 3));
+        const mat = new THREE.PointsMaterial({ color: 0xff0000, size: 0.15 });
+        points = new THREE.Points(geo, mat);
+        scene.add(points);
 
-            // 3. SEA LIONS (The only clear part of your nightmare)
-            for (let i = 0; i < 100; i++) {
-                const mat = new THREE.SpriteMaterial({ map: texture });
-                const s = new THREE.Sprite(mat);
-                s.position.set((Math.random()-0.5)*12, (Math.random()-0.5)*12, (Math.random()-0.5)*12);
-                s.scale.set(0.5, 0.5, 1);
-                scene.add(s);
-                swarm.push(s);
-            }
+        // --- OPENCV / WEBCAM LOGIC ---
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false })
+            .then(stream => { video.srcObject = stream; video.play(); });
 
-            const btn = document.getElementById('start-button');
-            btn.addEventListener('click', () => {
-                navigator.xr.requestSession('immersive-ar', {
-                    requiredFeatures: ['local-floor'],
-                    optionalFeatures: ['dom-overlay'],
-                    domOverlay: { root: document.body }
-                }).then(session => {
-                    renderer.xr.setSession(session);
-                    btn.style.display = 'none';
-                    startTime = Date.now();
-                });
-            });
+        window.onload = () => {
+            cv['onRuntimeInitialized'] = () => {
+                src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+                dst = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC1);
+                hsv = new cv.Mat();
+                mask = new cv.Mat();
+                processVideo();
+            };
+        };
 
-            renderer.setAnimationLoop(() => {
-                time += 0.04;
-                const elapsed = (Date.now() - startTime) / 1000;
+        function processVideo() {
+            try {
+                let cap = new cv.VideoCapture(video);
+                cap.read(src);
 
-                // 1. HEADACHE ENGINE (Starts after 100s)
-                if (elapsed > 10) {
-                    const throb = Math.abs(Math.sin(time * 2));
-                    document.documentElement.style.setProperty('--headache', throb * 0.6);
+                // Laser Detection
+                cv.cvtColor(src, hsv, cv.COLOR_RGBA2RGB);
+                cv.cvtColor(hsv, hsv, cv.COLOR_RGB2HSV);
+                
+                // Mask for bright laser (adjust values if needed)
+                let low = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [0, 0, 240, 0]);
+                let high = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [180, 50, 255, 0]);
+                cv.inRange(hsv, low, high, mask);
+
+                let moments = cv.moments(mask, false);
+                if (moments.m00 > 5) {
+                    let cx = moments.m10 / moments.m00;
+                    let cy = moments.m01 / moments.m00;
+                    
+                    let pixel_offset = cx - (src.cols / 2);
+                    if (Math.abs(pixel_offset) > 2) {
+                        let dist = H_OFFSET / Math.tan(Math.abs(pixel_offset) * RPC);
+                        
+                        // Add to 3D Scene
+                        const pos = points.geometry.attributes.position.array;
+                        pos[pointIdx * 3] = (pixel_offset * (dist / 300)) / 5;
+                        pos[pointIdx * 3 + 1] = ((src.rows/2 - cy) * (dist / 300)) / 5;
+                        pos[pointIdx * 3 + 2] = (-dist) / 5;
+                        
+                        pointIdx = (pointIdx + 1) % MAX_POINTS;
+                        points.geometry.attributes.position.needsUpdate = true;
+                        document.getElementById('pt-count').innerText = pointIdx;
+                    }
                 }
 
-                // 2. DRUNKEN INERTIA (Camera can't stay still)
-                camera.position.x += Math.sin(time * 0.5) * 0.05;
-                camera.position.z += Math.cos(time * 0.3) * 0.05;
-                camera.rotation.y += Math.sin(time * 0.2) * 0.02;
-                camera.rotation.z = Math.sin(time * 0.8) * 0.2;
-                camera.fov = 110 + Math.sin(time) * 30;
-                camera.updateProjectionMatrix();
-
-                // 3. CSS CHAOS
-                document.documentElement.style.setProperty('--drift-x', `${Math.sin(time * 2) * 40}px`);
-                document.documentElement.style.setProperty('--drift-y', `${Math.cos(time * 1.5) * 40}px`);
-                document.documentElement.style.setProperty('--wobble', `${Math.sin(time) * 10}deg`);
-
-                // 4. THE WAVE FLOOR (Opaque & Violent)
-                const pos = floor.geometry.attributes.position;
-                for (let i = 0; i < pos.count; i++) {
-                    const x = pos.getX(i);
-                    const y = pos.getY(i);
-                    const wave = Math.sin(x + time) * 0.8 + Math.cos(y + time) * 0.8;
-                    pos.setZ(i, wave);
-                }
-                pos.needsUpdate = true;
-
-                renderer.render(scene, camera);
-            });
+                // HUD Visual Effect (Scanlines)
+                cv.imshow('canvasOutput', mask); // Shows the laser detection "Vision"
+                
+                low.delete(); high.delete();
+                requestAnimationFrame(processVideo);
+            } catch (err) {
+                setTimeout(processVideo, 1000);
+            }
         }
 
-        window.addEventListener('load', init);
+        renderer.setAnimationLoop(() => { renderer.render(scene, camera); });
     </script>
 </body>
 </html>
